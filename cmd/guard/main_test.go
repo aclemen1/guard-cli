@@ -295,6 +295,11 @@ func TestSchemaAndText(t *testing.T) {
 	if code := run([]string{"schema", "guard", "fire", "--config", e.cfg}, strings.NewReader(""), &out, &errw); code != 0 || !strings.Contains(out.String(), "guard fire <key>") {
 		t.Fatalf("%d %s %s", code, out.String(), errw.String())
 	}
+	out.Reset()
+	run([]string{"ls", "--format", "text", "--config", e.cfg}, strings.NewReader(""), &out, &errw)
+	if out.Len() != 0 {
+		t.Fatalf("an empty list writes nothing: %q", out.String())
+	}
 	e.ok("add", "Rule", "--sphere", "perso", "--ref", "case:a", "--when", "when X calls", "--trigger", "with:contact:X")
 	out.Reset()
 	run([]string{"ls", "--format", "text", "--config", e.cfg}, strings.NewReader(""), &out, &errw)

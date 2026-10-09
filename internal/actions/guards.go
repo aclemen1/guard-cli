@@ -656,10 +656,6 @@ func textItem(w io.Writer, v any) {
 
 func textList(w io.Writer, v any) {
 	items, _ := v.([]Item)
-	if len(items) == 0 {
-		fmt.Fprintln(w, "no rule")
-		return
-	}
 	for _, it := range items {
 		fmt.Fprintln(w, Line(it))
 	}
