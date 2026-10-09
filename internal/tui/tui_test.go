@@ -94,3 +94,48 @@ func TestModalTakesKeys(t *testing.T) {
 		t.Fatal("q goes to the form, not to the TUI")
 	}
 }
+
+func arrow(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
+
+func TestFoldSections(t *testing.T) {
+	m := setup(t)
+	if it, ok := m.current(); !ok || it.ID != "PG-0001" {
+		t.Fatalf("the first rule is selected at start: %+v", it)
+	}
+	press(m, arrow(tea.KeyLeft))
+	if _, ok := m.current(); ok || m.rows[m.sel].item >= 0 {
+		t.Fatalf("← on a rule climbs to its section header")
+	}
+	press(m, arrow(tea.KeyLeft))
+	if len(m.rows) != 1 || !strings.Contains(ansi.Strip(m.render()), "▸ Actives (2)") {
+		t.Fatalf("← on a header folds its section:\n%s", ansi.Strip(m.render()))
+	}
+	press(m, arrow(tea.KeyRight))
+	if len(m.rows) != 3 || !strings.Contains(ansi.Strip(m.render()), "▾ Actives (2)") {
+		t.Fatalf("→ unfolds: %d rows", len(m.rows))
+	}
+	press(m, key("j"))
+	press(m, arrow(tea.KeyRight))
+	if !m.cardOn {
+		t.Fatal("→ on a rule opens its card")
+	}
+}
+
+func TestSelect(t *testing.T) {
+	m := setup(t)
+	press(m, key("j"))
+	press(m, key("space"))
+	m2 := newModel(m.cfgPath, m.cfg, m.spheres)
+	m2.w, m2.h = 120, 30
+	m2.wantSel, m2.reveal = "PG-0002", true
+	m2.Update(m2.load()())
+	if it, ok := m2.current(); !ok || it.ID != "PG-0002" || m2.view != 1 {
+		t.Fatalf("--select shows a lifted rule in the view of lifted rules: view %d, %+v", m2.view, it)
+	}
+	m3 := newModel(m.cfgPath, m.cfg, m.spheres)
+	m3.wantSel, m3.reveal = "PG-0042", true
+	m3.Update(m3.load()())
+	if it, ok := m3.current(); !ok || it.ID != "PG-0001" || m3.view != 0 || !strings.Contains(m3.status, "PG-0042 introuvable") {
+		t.Fatalf("an unknown id opens as usual, with a message: %q %+v", m3.status, it)
+	}
+}

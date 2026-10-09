@@ -168,11 +168,10 @@ func (m *model) list(w, h int) []string {
 	whenW = min(whenW, w/3)
 	ruleW := max(10, w-idW-whenW-refW-7)
 
-	type row struct {
-		text string
-		item int
+	count := map[string]int{}
+	for _, it := range m.items {
+		count[group(it)]++
 	}
-	var rows []row
 	head := " " + sMuted.Render(pad("ID", idW)) + "  " + sMuted.Render(pad("Règle", ruleW))
 	if whenW > 0 {
 		head += "  " + sMuted.Render(pad("Quand", whenW))
@@ -180,50 +179,72 @@ func (m *model) list(w, h int) []string {
 	if refW > 0 {
 		head += "  " + sMuted.Render(pad("Réf.", refW))
 	}
-	prev := ""
-	for i, it := range m.items {
-		if g := group(it); g != prev {
-			if prev != "" {
-				rows = append(rows, row{"", -1})
+	// lines are what is drawn: a blank before each section but the first, then the rows.
+	type line struct {
+		text string
+		row  int
+	}
+	var lines []line
+	for r, x := range m.rows {
+		if x.item < 0 {
+			if r > 0 {
+				lines = append(lines, line{"", -1})
 			}
-			rows = append(rows, row{" " + sSection.Render(sectionName(it, m.multi())), -1})
-			prev = g
+			mark := "▾ "
+			if m.folded[x.group] {
+				mark = "▸ "
+			}
+			it := m.items[firstOf(m.items, x.group)]
+			lines = append(lines, line{" " + sTitle.Render(mark) + sSection.Render(sectionName(it, m.multi())) +
+				sMuted.Render(fmt.Sprintf(" (%d)", count[x.group])), r})
+			continue
 		}
+		it := m.items[x.item]
 		st := sText
 		if it.State == store.Lifted {
 			st = sMuted
 		}
-		line := " " + sMuted.Render(pad(it.ID, idW)) + "  " + st.Render(pad(it.Title, ruleW))
+		text := " " + sMuted.Render(pad(it.ID, idW)) + "  " + st.Render(pad(it.Title, ruleW))
 		if whenW > 0 {
-			line += "  " + sMuted.Render(pad(actions.Situation(it.Guard), whenW))
+			text += "  " + sMuted.Render(pad(actions.Situation(it.Guard), whenW))
 		}
 		if refW > 0 {
-			line += "  " + sMuted.Render(pad(strings.Join(it.Refs, ", "), refW))
+			text += "  " + sMuted.Render(pad(strings.Join(it.Refs, ", "), refW))
 		}
-		rows = append(rows, row{line, i})
+		lines = append(lines, line{text, r})
 	}
 	bodyH := max(1, h-1)
-	selRow := 0
-	for r, x := range rows {
-		if x.item == m.sel {
-			selRow = r
+	selLine := 0
+	for i, l := range lines {
+		if l.row == m.sel {
+			selLine = i
 		}
 	}
-	if selRow < m.top {
-		m.top = max(0, selRow-1)
+	if selLine < m.top {
+		m.top = max(0, selLine-1)
 	}
-	if selRow >= m.top+bodyH {
-		m.top = selRow - bodyH + 1
+	if selLine >= m.top+bodyH {
+		m.top = selLine - bodyH + 1
 	}
 	out := []string{head}
-	for r := m.top; r < len(rows) && len(out) <= bodyH; r++ {
-		if rows[r].item == m.sel {
-			out = append(out, selectLine(rows[r].text, w))
+	for i := m.top; i < len(lines) && len(out) <= bodyH; i++ {
+		if lines[i].row == m.sel && lines[i].row >= 0 {
+			out = append(out, selectLine(lines[i].text, w))
 		} else {
-			out = append(out, rows[r].text)
+			out = append(out, lines[i].text)
 		}
 	}
 	return out
+}
+
+// firstOf is the index of the first rule of a section.
+func firstOf(items []actions.Item, g string) int {
+	for i, it := range items {
+		if group(it) == g {
+			return i
+		}
+	}
+	return 0
 }
 
 // detail shows every field of the selected rule, then its context and history.
@@ -323,6 +344,7 @@ func help() []string {
 		"",
 		helpLine("j k", "descendre, monter", "gg G", "début, fin", "ctrl+d ctrl+u", "page", "[ ]", "section"),
 		helpLine("tab", "détail", "entrée l", "fiche", "esc h", "retour", "J K", "défiler le détail"),
+		helpLine("←", "replier la section, ou remonter à son titre", "→", "déplier la section, ou ouvrir la fiche"),
 		helpLine("1 2 3", "actives, levées, toutes", "s", "sphère", "t T", "trier, inverser", "/", "filtrer", "r", "relire"),
 		helpLine("c", "nouvelle consigne", "E", "modifier", "e x", "lever", "espace", "lever ou rétablir"),
 		helpLine("N", "ajouter une note", "o", "ouvrir la référence", "#", "supprimer définitivement", "?", "aide", "q", "quitter"),

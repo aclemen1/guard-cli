@@ -48,11 +48,12 @@ func (m *model) checkBin() bool {
 
 // saved is what a restart keeps.
 type saved struct {
-	View   int    `json:"view"`
-	Filter string `json:"filter,omitempty"`
-	Only   string `json:"only,omitempty"`
-	Sel    string `json:"sel,omitempty"`
-	Detail bool   `json:"detail"`
+	View   int      `json:"view"`
+	Filter string   `json:"filter,omitempty"`
+	Only   string   `json:"only,omitempty"`
+	Sel    string   `json:"sel,omitempty"`
+	Detail bool     `json:"detail"`
+	Folded []string `json:"folded,omitempty"`
 }
 
 func (m *model) restore() {
@@ -69,13 +70,24 @@ func (m *model) restore() {
 		m.view = s.View
 	}
 	m.filter, m.only, m.detailOn = s.Filter, s.Only, s.Detail
-	m.restoreSel = s.Sel
+	m.wantSel = s.Sel
+	for _, g := range s.Folded {
+		if m.folded == nil {
+			m.folded = map[string]bool{}
+		}
+		m.folded[g] = true
+	}
 	m.say("nouvelle version chargée", false)
 }
 
 // reexec replaces the process with the new binary, on the same view and selection.
 func (m *model) reexec() error {
 	s := saved{View: m.view, Filter: m.filter, Only: m.only, Detail: m.detailOn}
+	for g, on := range m.folded {
+		if on {
+			s.Folded = append(s.Folded, g)
+		}
+	}
 	if it, ok := m.current(); ok {
 		s.Sel = it.ID
 	}

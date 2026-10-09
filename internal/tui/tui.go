@@ -25,10 +25,13 @@ import (
 func init() {
 	spec.Register(&spec.Action{
 		Category: "setup", Name: "tui", Top: true,
-		Summary:  "Open the terminal interface: the rules by state and sphere, their detail, modal inputs.",
-		Params:   []spec.Param{{Name: "sphere", Kind: spec.String, Help: "Show only this sphere. Defaults to $GUARD_SPHERE, else every sphere."}},
+		Summary: "Open the terminal interface: the rules by state and sphere, their detail, modal inputs.",
+		Params: []spec.Param{
+			{Name: "sphere", Kind: spec.String, Help: "Show only this sphere. Defaults to $GUARD_SPHERE, else every sphere."},
+			{Name: "select", Kind: spec.String, Help: "Open on this rule, selected and in sight, in the view that holds it (e.g. PG-0001). An unknown id opens the TUI as usual, with a message."},
+		},
 		Effects:  []string{"Runs until q; every change goes through the same actions as the CLI."},
-		Examples: []string{"guard tui", "guard tui --sphere pro"},
+		Examples: []string{"guard tui", "guard tui --sphere pro", "guard tui --select PG-0001"},
 		Run: func(ctx *spec.Context) (any, error) {
 			cfg, err := config.Load(ctx.Config)
 			if err != nil {
@@ -44,7 +47,11 @@ func init() {
 			}
 			m.exe = executable()
 			m.exeStamp = stamp(m.exe)
+			restarted := os.Getenv(stateEnv) != ""
 			m.restore()
+			if id := strings.ToUpper(strings.TrimSpace(ctx.Str("select"))); id != "" && !restarted {
+				m.wantSel, m.reveal = id, true
+			}
 			_, err = tea.NewProgram(m).Run()
 			if err == nil && m.restart {
 				return spec.Streamed{}, m.reexec()
@@ -65,6 +72,8 @@ type model struct {
 
 	all    []actions.Item
 	items  []actions.Item
+	rows   []row           // what the cursor moves over: section headers and rules
+	folded map[string]bool // sections folded by ←, by group key
 	err    string
 	view   int
 	filter string
@@ -94,8 +103,16 @@ type model struct {
 	exeStamp string
 	newStamp string
 	restart  bool
-	// restoreSel is the rule selected before a restart, chosen again at the first read.
-	restoreSel string
+	// wantSel is the rule to select at the next read: before a restart, or by --select.
+	wantSel string
+	// reveal lets wantSel change the view, the sphere and the folds to show the rule.
+	reveal bool
+}
+
+// row is a line of the list: a section header (item -1) or a rule.
+type row struct {
+	group string
+	item  int
 }
 
 type loadedMsg struct {
@@ -184,9 +201,11 @@ func (m *model) say(s string, isErr bool) {
 
 // apply filters and sorts the rules of the current view, keeping the selection.
 func (m *model) apply() {
-	keep := ""
+	keepID, keepGroup := "", ""
 	if it, ok := m.current(); ok {
-		keep = it.ID
+		keepID = it.ID
+	} else if m.sel >= 0 && m.sel < len(m.rows) {
+		keepGroup = m.rows[m.sel].group
 	}
 	words := strings.Fields(strings.ToLower(m.filter))
 	var out []actions.Item
@@ -231,18 +250,43 @@ func (m *model) apply() {
 		return key(a) < key(b)
 	})
 	m.items = out
-	m.sel = 0
+	m.rows = nil
+	prev := ""
 	for i, it := range out {
-		if it.ID == keep {
-			m.sel = i
+		g := group(it)
+		if g != prev {
+			m.rows = append(m.rows, row{group: g, item: -1})
+			prev = g
 		}
+		if !m.folded[g] {
+			m.rows = append(m.rows, row{group: g, item: i})
+		}
+	}
+	m.sel = -1
+	for r, x := range m.rows {
+		if (x.item >= 0 && out[x.item].ID == keepID) || (keepID == "" && x.item < 0 && x.group == keepGroup) {
+			m.sel = r
+		}
+	}
+	if m.sel < 0 {
+		m.sel = m.firstRule()
 	}
 	m.clamp()
 }
 
+// firstRule is the row of the first rule shown, else the first row.
+func (m *model) firstRule() int {
+	for r, x := range m.rows {
+		if x.item >= 0 {
+			return r
+		}
+	}
+	return 0
+}
+
 func (m *model) clamp() {
-	if m.sel >= len(m.items) {
-		m.sel = len(m.items) - 1
+	if m.sel >= len(m.rows) {
+		m.sel = len(m.rows) - 1
 	}
 	if m.sel < 0 {
 		m.sel = 0
@@ -250,10 +294,94 @@ func (m *model) clamp() {
 }
 
 func (m *model) current() (actions.Item, bool) {
-	if m.sel < 0 || m.sel >= len(m.items) {
+	if m.sel < 0 || m.sel >= len(m.rows) || m.rows[m.sel].item < 0 {
 		return actions.Item{}, false
 	}
-	return m.items[m.sel], true
+	return m.items[m.rows[m.sel].item], true
+}
+
+// selectID selects a rule shown in the list, unfolding its section; false if it is not there.
+func (m *model) selectID(id string) bool {
+	for _, it := range m.items {
+		if it.ID == id && m.folded[group(it)] {
+			delete(m.folded, group(it))
+			m.apply()
+		}
+	}
+	for r, x := range m.rows {
+		if x.item >= 0 && m.items[x.item].ID == id {
+			m.selectIndex(r)
+			return true
+		}
+	}
+	return false
+}
+
+// selectWanted selects wantSel after a read; with reveal, it changes the view
+// and the sphere shown so that the rule is in sight.
+func (m *model) selectWanted() {
+	id, reveal := m.wantSel, m.reveal
+	m.wantSel, m.reveal = "", false
+	if id == "" || m.selectID(id) || !reveal {
+		return
+	}
+	for _, it := range m.all {
+		if it.ID != id {
+			continue
+		}
+		if (m.view == 0 && it.State != store.Active) || (m.view == 1 && it.State != store.Lifted) {
+			m.view = map[bool]int{true: 0, false: 1}[it.State == store.Active]
+		}
+		if m.only != "" && m.only != it.Sphere {
+			m.only = ""
+		}
+		m.filter = ""
+		m.apply()
+		if m.selectID(id) {
+			return
+		}
+	}
+	m.say("consigne "+id+" introuvable : la liste s'ouvre comme d'habitude", true)
+}
+
+// foldLeft folds the section of an unfolded header, or climbs to the header of the rule.
+func (m *model) foldLeft() {
+	if m.sel < 0 || m.sel >= len(m.rows) {
+		return
+	}
+	x := m.rows[m.sel]
+	if x.item < 0 {
+		if !m.folded[x.group] {
+			if m.folded == nil {
+				m.folded = map[string]bool{}
+			}
+			m.folded[x.group] = true
+			m.apply()
+		}
+		return
+	}
+	for r := m.sel - 1; r >= 0; r-- {
+		if m.rows[r].item < 0 {
+			m.selectIndex(r)
+			return
+		}
+	}
+}
+
+// foldRight unfolds a folded section, or opens the rule's card.
+func (m *model) foldRight() {
+	if m.sel < 0 || m.sel >= len(m.rows) {
+		return
+	}
+	x := m.rows[m.sel]
+	if x.item < 0 {
+		if m.folded[x.group] {
+			delete(m.folded, x.group)
+			m.apply()
+		}
+		return
+	}
+	m.cardOn = true
 }
 
 func (m *model) selectIndex(i int) {
@@ -267,30 +395,14 @@ func (m *model) selectIndex(i int) {
 
 func group(it actions.Item) string { return it.State + "/" + it.Sphere }
 
-// groupStart is the first line of the next (dir 1) or previous (dir -1) section.
+// groupStart is the header of the next (dir 1) or previous (dir -1) section.
 func (m *model) groupStart(dir int) int {
-	if len(m.items) == 0 {
-		return 0
-	}
-	i := m.sel
-	cur := group(m.items[i])
-	if dir > 0 {
-		for i < len(m.items)-1 && group(m.items[i]) == cur {
-			i++
-		}
-		return i
-	}
-	for i > 0 && group(m.items[i-1]) == cur {
-		i--
-	}
-	if i == m.sel && i > 0 {
-		i--
-		prev := group(m.items[i])
-		for i > 0 && group(m.items[i-1]) == prev {
-			i--
+	for r := m.sel + dir; r >= 0 && r < len(m.rows); r += dir {
+		if m.rows[r].item < 0 {
+			return r
 		}
 	}
-	return i
+	return m.sel
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -324,14 +436,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = ""
 		m.all = msg.items
 		m.apply()
-		if m.restoreSel != "" {
-			for i, it := range m.items {
-				if it.ID == m.restoreSel {
-					m.selectIndex(i)
-				}
-			}
-			m.restoreSel = ""
-		}
+		m.selectWanted()
 	case doneMsg:
 		if msg.err != nil {
 			m.say(msg.err.Error(), true)
@@ -351,11 +456,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.all = msg.items
 		m.apply()
-		for i, it := range m.items {
-			if it.ID == msg.sel {
-				m.selectIndex(i)
-			}
-		}
+		m.selectID(msg.sel)
 	case filesMsg:
 		return m, tea.Batch(m.load(), m.waitFiles())
 	case signalMsg:
@@ -444,7 +545,7 @@ func (m *model) keyList(k tea.KeyPressMsg) tea.Cmd {
 	case "home":
 		m.selectIndex(0)
 	case "end", "G":
-		m.selectIndex(len(m.items) - 1)
+		m.selectIndex(len(m.rows) - 1)
 	case "J":
 		m.scroll += 3
 	case "K":
@@ -455,11 +556,21 @@ func (m *model) keyList(k tea.KeyPressMsg) tea.Cmd {
 		m.selectIndex(m.groupStart(1))
 	case "tab":
 		m.detailOn = !m.detailOn
-	case "enter", "l", "right":
+	case "enter", "l":
 		if _, ok := m.current(); ok {
 			m.cardOn = true
+		} else {
+			m.foldRight()
 		}
-	case "esc", "h", "left":
+	case "right":
+		m.foldRight()
+	case "left":
+		if m.helpOn || m.cardOn {
+			m.helpOn, m.cardOn = false, false
+		} else {
+			m.foldLeft()
+		}
+	case "esc", "h":
 		switch {
 		case m.helpOn:
 			m.helpOn = false

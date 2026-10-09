@@ -64,7 +64,11 @@ with `{"sphere","guard"}` to open what the rule refers to.
 ## TUI
 
 `guard tui`: views 1 Actives, 2 Levées, 3 Toutes; columns ID, Règle, Quand,
-Réf.; the detail of the selected rule. `c` new, `E` edit, `e` and `x` lift,
+Réf.; the detail of the selected rule. `guard tui --select PG-0001` opens on
+that rule, in the view that holds it; an unknown id opens as usual, with a
+message. Rules come in sections by state and sphere: `←` folds a section, or
+climbs from a rule to its header; `→` unfolds it, or opens the rule's card.
+`c` new, `E` edit, `e` and `x` lift,
 `space` lift or restore, `#` delete, `N` note, `o` open, `s` sphere, `/`
 filter, `t T` sort, `r` reload, `?` keys. Every input is a modal (tuikit). It
 reloads when a rule file changes or on SIGUSR1, and restarts itself on a new
