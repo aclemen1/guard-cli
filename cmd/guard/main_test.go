@@ -307,3 +307,20 @@ func TestSchemaAndText(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+func TestShowJournal(t *testing.T) {
+	e := setup(t)
+	e.ok("add", "Rule", "--sphere", "perso")
+	if r := e.ok("show", "PG-0001"); r["journal"] != nil {
+		t.Fatalf("no history.ls, no journal: %v", r)
+	}
+	e.appendConfig("history:\n  ls: [\"sh\", \"-c\", \"echo entries of $0 in $1\", \"guard:{id}\", \"{sphere}\"]\n")
+	if r := e.ok("show", "PG-0001"); r["journal"] != "entries of guard:PG-0001 in perso" {
+		t.Fatalf("journal: %v", r["journal"])
+	}
+	b, _ := os.ReadFile(e.cfg)
+	os.WriteFile(e.cfg, []byte(strings.Replace(string(b), "echo entries", "exit 3; echo", 1)), 0o644)
+	if r := e.ok("show", "PG-0001"); r["journal"] != nil {
+		t.Fatalf("a failing command shows nothing: %v", r["journal"])
+	}
+}

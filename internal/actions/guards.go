@@ -21,6 +21,8 @@ import (
 type Item struct {
 	store.Guard
 	Sphere string `json:"sphere"`
+	// Journal is what history.ls printed for the rule: guard show only.
+	Journal string `json:"journal,omitempty"`
 }
 
 func ItemOf(s *store.Store, g *store.Guard) Item { return Item{Guard: *g, Sphere: s.Sphere} }
@@ -206,7 +208,9 @@ func registerGuards() {
 			if err != nil {
 				return nil, err
 			}
-			return ItemOf(s, g), nil
+			it := ItemOf(s, g)
+			it.Journal = Journal(cfg, it)
+			return it, nil
 		},
 		Text: textDetail,
 	})
@@ -717,4 +721,28 @@ func textDetail(w io.Writer, v any) {
 			fmt.Fprintf(w, "  %s  %s  %s\n", l.At, l.By, l.What)
 		}
 	}
+	if it.Journal != "" {
+		fmt.Fprintf(w, "\njournal:\n%s\n", it.Journal)
+	}
+}
+
+// Journal runs history.ls of the configuration for a rule; empty when there is
+// none, or when the command fails.
+func Journal(cfg *config.Config, it Item) string {
+	if len(cfg.History.Ls) == 0 {
+		return ""
+	}
+	timeout := cfg.History.Timeout
+	if timeout == "" {
+		timeout = "5s"
+	}
+	argv := make([]string, len(cfg.History.Ls))
+	for i, a := range cfg.History.Ls {
+		argv[i] = strings.NewReplacer("{id}", it.ID, "{sphere}", it.Sphere).Replace(a)
+	}
+	out, err := hooks.Run(argv, timeout, nil, nil)
+	if err != nil {
+		return ""
+	}
+	return out
 }

@@ -92,6 +92,9 @@ type model struct {
 	modal     *tuikit.Modal
 	target    actions.Item // the rule a modal is about
 	editing   bool
+	// journal holds, by rule id, what history.ls printed; asked marks the reads under way.
+	journal map[string]string
+	asked   map[string]bool
 	// refComp completes from the shared sources named by complete.refs in the configuration.
 	refComp *complete.Completer
 
@@ -127,6 +130,8 @@ type doneMsg struct {
 	status, sel string
 	err         error
 }
+
+type journalMsg struct{ id, text string }
 
 type filesMsg struct{}
 type signalMsg struct{}
@@ -413,10 +418,36 @@ func (m *model) groupStart(dir int) int {
 	return m.sel
 }
 
+// Update handles a message, then reads the journal of the rule shown, if needed.
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if c := m.readJournal(); c != nil {
+		cmd = tea.Batch(cmd, c)
+	}
+	return next, cmd
+}
+
+// readJournal reads, once per load, the journal of the rule whose detail is shown.
+func (m *model) readJournal() tea.Cmd {
+	if len(m.cfg.History.Ls) == 0 || !(m.detailOn || m.cardOn) {
+		return nil
+	}
+	it, ok := m.current()
+	if !ok || m.asked[it.ID] {
+		return nil
+	}
+	if m.asked == nil {
+		m.asked, m.journal = map[string]bool{}, map[string]string{}
+	}
+	m.asked[it.ID] = true
+	cfg := m.cfg
+	return func() tea.Msg { return journalMsg{it.ID, actions.Journal(cfg, it)} }
+}
+
+func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.modal.Open() {
 		switch msg.(type) {
-		case loadedMsg, doneMsg, filesMsg, signalMsg, tickMsg, tuikit.DoneMsg, tuikit.CancelMsg, tea.BackgroundColorMsg, tea.WindowSizeMsg:
+		case loadedMsg, doneMsg, filesMsg, signalMsg, tickMsg, journalMsg, selectAfter, tuikit.DoneMsg, tuikit.CancelMsg, tea.BackgroundColorMsg, tea.WindowSizeMsg:
 		default:
 			return m, m.modal.Update(msg)
 		}
@@ -436,7 +467,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.done(msg)
 	case tuikit.CancelMsg:
 		m.modal = nil
+	case journalMsg:
+		if m.journal != nil {
+			m.journal[msg.id] = msg.text
+		}
 	case loadedMsg:
+		m.asked, m.journal = nil, nil
 		if msg.err != nil {
 			m.err = msg.err.Error()
 			return m, nil
@@ -458,6 +494,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	case selectAfter:
+		m.asked, m.journal = nil, nil
 		if msg.err != nil {
 			m.err = msg.err.Error()
 			return m, nil

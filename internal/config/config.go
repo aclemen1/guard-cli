@@ -24,6 +24,9 @@ type Config struct {
 	// Complete names, for each field of the TUI (refs), the sources of the shared
 	// reference completion (tuikit refs.yaml), proposed besides the refs already cited.
 	Complete map[string]complete.Uses `yaml:"complete,omitempty"`
+	// History is the command that prints the latest entries of a rule's journal,
+	// shown by guard show and the card of the TUI.
+	History History `yaml:"history,omitempty"`
 	// Refs is the former name of complete.refs, still read.
 	Refs []string `yaml:"refs,omitempty"`
 
@@ -44,6 +47,12 @@ type Hook struct {
 type Command struct {
 	Run     []string `yaml:"run,omitempty"`
 	Timeout string   `yaml:"timeout,omitempty"` // default 30s
+}
+
+// History.Ls is an argv where {id} and {sphere} name the rule; it prints text.
+type History struct {
+	Ls      []string `yaml:"ls,omitempty"`
+	Timeout string   `yaml:"timeout,omitempty"` // default 5s
 }
 
 // HookEvents are the events a hook can listen to.

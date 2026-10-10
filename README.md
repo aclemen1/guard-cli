@@ -88,6 +88,15 @@ open: {run: ["~/bin/open-ref"]}
 complete: {refs: [cases, people]}   # sources of tuikit's shared completion (refs.yaml), by field
 ```
 
+`history.ls` is an argv that prints the latest entries of a rule's journal;
+`{id}` and `{sphere}` name the rule. `guard show` (field `journal`) and the
+card of the TUI show what it prints; nothing is shown when it prints nothing
+or fails.
+
+```yaml
+history: {ls: [my-journal, ls, "rule:{id}", --limit, "10"], timeout: 5s}
+```
+
 The Réfs field of the TUI proposes the refs already cited by rules, then those
 of the sources named in `complete.refs` (formerly `refs`), declared once in `~/.config/tuikit/refs.yaml`
 (see tuikit's `complete` package).

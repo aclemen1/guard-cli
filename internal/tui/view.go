@@ -283,6 +283,12 @@ func (m *model) detail(w, h int) []string {
 		out = append(out, "", sSection.Render("Contexte"))
 		out = append(out, wrap(it.Body, w)...)
 	}
+	if j := strings.TrimSpace(m.journal[it.ID]); j != "" {
+		out = append(out, "", sSection.Render("Journal"))
+		for _, l := range wrap(j, w) {
+			out = append(out, sMuted.Render(l))
+		}
+	}
 	if len(it.Log) > 0 {
 		out = append(out, "", sSection.Render("Historique"))
 		for _, l := range it.Log {

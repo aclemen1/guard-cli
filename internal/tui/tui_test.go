@@ -179,3 +179,16 @@ func TestCompleteFormerKey(t *testing.T) {
 		t.Fatalf("complete.refs wins: %v", got)
 	}
 }
+
+func TestCardJournal(t *testing.T) {
+	m := setup(t)
+	m.cfg.History.Ls = []string{"echo", "entrée du journal de {id}"}
+	_, cmd := m.Update(m.load()())
+	if cmd == nil {
+		t.Fatal("a load asks for the journal of the rule shown")
+	}
+	m.Update(cmd())
+	if v := ansi.Strip(m.render()); !strings.Contains(v, "Journal") || !strings.Contains(v, "entrée du journal de PG-0001") {
+		t.Fatalf("the card shows the journal:\n%s", v)
+	}
+}
