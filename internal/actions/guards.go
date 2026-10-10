@@ -732,8 +732,14 @@ func textDetail(w io.Writer, v any) {
 // Journal runs history.ls of the configuration for a rule; empty when there is
 // none, or when the command fails.
 func Journal(cfg *config.Config, it Item) string {
+	out, _ := JournalErr(cfg, it)
+	return out
+}
+
+// JournalErr runs history.ls like Journal, and says why it failed.
+func JournalErr(cfg *config.Config, it Item) (string, error) {
 	if len(cfg.History.Ls) == 0 {
-		return ""
+		return "", nil
 	}
 	timeout := cfg.History.Timeout
 	if timeout == "" {
@@ -745,7 +751,7 @@ func Journal(cfg *config.Config, it Item) string {
 	}
 	out, err := hooks.Run(argv, timeout, nil, nil)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("history.ls: %v", err)
 	}
-	return out
+	return out, nil
 }

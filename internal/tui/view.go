@@ -87,6 +87,10 @@ func (m *model) header(w int) []string {
 	} else if m.filter != "" {
 		line2 += sMuted.Render("   filtre : ") + sText.Render(m.filter)
 	}
+	if b := m.busy.View(); b != "" {
+		b = ansi.Truncate(b, max(10, w-ansi.StringWidth(line2)-3), "…")
+		line2 += strings.Repeat(" ", max(3, w-ansi.StringWidth(line2)-ansi.StringWidth(b))) + b
+	}
 	return []string{line1, line2, ""}
 }
 
@@ -96,6 +100,9 @@ func (m *model) footer(w int) string {
 			return sErr.Render(m.status)
 		}
 		return sOK.Render(m.status)
+	}
+	if m.busy.Unread() > 0 {
+		return helpLine(tuikit.BusyKey, "voir l'échec", "c", "nouveau", "E", "modifier", "e", "lever", "N", "note", "o", "ouvrir", "/", "filtrer", "?", "aide", "q", "quitter")
 	}
 	return helpLine("c", "nouveau", "E", "modifier", "e", "lever", "espace", "lever/rétablir", "N", "note", "o", "ouvrir", "/", "filtrer", "?", "aide", "q", "quitter")
 }
@@ -353,7 +360,8 @@ func help() []string {
 		helpLine("←", "replier la section, ou remonter à son titre", "→", "déplier la section, ou ouvrir la fiche"),
 		helpLine("1 2 3", "actives, levées, toutes", "s", "sphère", "t T", "trier, inverser", "/", "filtrer", "r", "relire"),
 		helpLine("c", "nouvelle consigne", "E", "modifier", "e x", "lever", "espace", "lever ou rétablir"),
-		helpLine("N", "ajouter une note", "o", "ouvrir la référence", "#", "supprimer définitivement", "?", "aide", "q", "quitter"),
+		helpLine("N", "ajouter une note", "o", "ouvrir la référence", "#", "supprimer définitivement"),
+		helpLine(tuikit.BusyKey, "travaux de fond : en cours, récents, échecs", "?", "aide", "q", "quitter"),
 		"",
 		sMuted.Render("Une consigne interdit ou conditionne une action ; elle n'en appelle aucune. Ce qui est à faire est une tâche."),
 		sMuted.Render("Lever une consigne la garde dans l'historique ; # ne sert qu'à effacer une erreur de saisie."),

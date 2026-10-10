@@ -98,6 +98,11 @@ type model struct {
 	// refComp completes from the shared sources named by complete.refs in the configuration.
 	refComp *complete.Completer
 
+	// busy shows the background jobs; after carries what a job leaves for the
+	// TUI (the rules read again after an action), read once the job has ended.
+	busy  *tuikit.Busy
+	after chan tea.Msg
+
 	w, h      int
 	status    string
 	statusErr bool
@@ -126,12 +131,20 @@ type loadedMsg struct {
 	err   error
 }
 
-type doneMsg struct {
-	status, sel string
-	err         error
-}
+// loadErr is a read that failed; as an error, Busy counts it as a failure.
+type loadErr struct{ err error }
+
+func (e loadErr) Error() string { return e.err.Error() }
 
 type journalMsg struct{ id, text string }
+
+// journalErr is a journal that could not be read.
+type journalErr struct {
+	id  string
+	err error
+}
+
+func (e journalErr) Error() string { return e.err.Error() }
 
 type filesMsg struct{}
 type signalMsg struct{}
@@ -140,7 +153,8 @@ type tickMsg struct{}
 func newModel(cfgPath string, cfg *config.Config, spheres []string) *model {
 	in := textinput.New()
 	in.Prompt = ""
-	m := &model{cfgPath: cfgPath, cfg: cfg, spheres: spheres, input: in, w: 100, h: 30, detailOn: true}
+	m := &model{cfgPath: cfgPath, cfg: cfg, spheres: spheres, input: in, w: 100, h: 30, detailOn: true,
+		busy: tuikit.NewBusy(), after: make(chan tea.Msg, 64)}
 	var missing []string
 	m.refComp, missing = complete.FromConfig(cfg.CompleteFor("refs")) // starts the commands: the cache is warm at the first form
 	if len(missing) > 0 {
@@ -185,27 +199,60 @@ func (m *model) load() tea.Cmd {
 	}
 }
 
-// act runs an action as the CLI would, then reloads.
-func (m *model) act(name string, args map[string]any, status string) tea.Cmd {
-	return func() tea.Msg {
+// reload reads the rules again under Busy.
+func (m *model) reload() tea.Cmd {
+	load := m.load()
+	return m.busy.Wrap("relecture", func() tea.Msg {
+		msg := load().(loadedMsg)
+		if msg.err != nil {
+			return loadErr{msg.err}
+		}
+		return msg
+	})
+}
+
+// act runs an action as the CLI would, hooks included, under Busy with label;
+// status is the text of its end. The rules read again follow by m.after.
+func (m *model) act(label, name string, args map[string]any, status string) tea.Cmd {
+	load, after := m.load(), m.after
+	return m.busy.Run(label, func() (string, error) {
 		a := spec.Find("guard", name)
 		ctx := m.ctx(args)
 		res, err := a.Run(ctx)
 		if err != nil {
-			return doneMsg{err: err}
+			return "", err
 		}
 		sel := ""
 		if it, ok := res.(actions.Item); ok {
 			sel = it.ID
 			if status == "" {
-				status = it.ID
+				status = it.ID + " ajoutée"
 			}
 		}
 		if len(ctx.Warnings) > 0 {
 			status += " (" + strings.Join(ctx.Warnings, " ; ") + ")"
 		}
-		return doneMsg{status: status, sel: sel}
+		after <- selectAfter{load().(loadedMsg), sel}
+		return status, nil
+	})
+}
+
+// drain hands the TUI what the ended jobs left.
+func (m *model) drain() tea.Cmd {
+	var cmds []tea.Cmd
+	for {
+		select {
+		case msg := <-m.after:
+			_, c := m.update(msg)
+			cmds = append(cmds, c)
+		default:
+			return tea.Batch(cmds...)
+		}
 	}
+}
+
+func (m *model) openBusy() {
+	m.modal = tuikit.NewModal("Travaux", m.busy.List()).SetSize(m.w, m.h)
 }
 
 func (m *model) say(s string, isErr bool) {
@@ -420,14 +467,21 @@ func (m *model) groupStart(dir int) int {
 
 // Update handles a message, then reads the journal of the rule shown, if needed.
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	next, cmd := m.update(msg)
+	var cmd tea.Cmd
+	if c, ok := m.busy.Update(msg); ok {
+		cmd = tea.Batch(c, m.drain())
+	} else {
+		_, cmd = m.update(msg)
+	}
 	if c := m.readJournal(); c != nil {
 		cmd = tea.Batch(cmd, c)
 	}
-	return next, cmd
+	return m, cmd
 }
 
-// readJournal reads, once per load, the journal of the rule whose detail is shown.
+// readJournal reads, once per load, the journal of the rule whose detail is
+// shown. A first read goes under Busy; reading again a journal already shown,
+// after a load, stays quiet.
 func (m *model) readJournal() tea.Cmd {
 	if len(m.cfg.History.Ls) == 0 || !(m.detailOn || m.cardOn) {
 		return nil
@@ -437,17 +491,30 @@ func (m *model) readJournal() tea.Cmd {
 		return nil
 	}
 	if m.asked == nil {
-		m.asked, m.journal = map[string]bool{}, map[string]string{}
+		m.asked = map[string]bool{}
+	}
+	if m.journal == nil {
+		m.journal = map[string]string{}
 	}
 	m.asked[it.ID] = true
 	cfg := m.cfg
-	return func() tea.Msg { return journalMsg{it.ID, actions.Journal(cfg, it)} }
+	read := func() tea.Msg {
+		text, err := actions.JournalErr(cfg, it)
+		if err != nil {
+			return journalErr{it.ID, err}
+		}
+		return journalMsg{it.ID, text}
+	}
+	if _, known := m.journal[it.ID]; known {
+		return read
+	}
+	return m.busy.Wrap("journal de "+it.ID, read)
 }
 
 func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.modal.Open() {
 		switch msg.(type) {
-		case loadedMsg, doneMsg, filesMsg, signalMsg, tickMsg, journalMsg, selectAfter, tuikit.DoneMsg, tuikit.CancelMsg, tea.BackgroundColorMsg, tea.WindowSizeMsg:
+		case loadedMsg, loadErr, filesMsg, signalMsg, tickMsg, journalMsg, journalErr, selectAfter, tuikit.DoneMsg, tuikit.CancelMsg, tea.BackgroundColorMsg, tea.WindowSizeMsg:
 		default:
 			return m, m.modal.Update(msg)
 		}
@@ -471,8 +538,12 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.journal != nil {
 			m.journal[msg.id] = msg.text
 		}
+	case journalErr:
+		// the failure is in Busy; the journal stays as it was
+	case loadErr:
+		m.err = msg.Error()
 	case loadedMsg:
-		m.asked, m.journal = nil, nil
+		m.asked = nil
 		if msg.err != nil {
 			m.err = msg.err.Error()
 			return m, nil
@@ -481,27 +552,18 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.all = msg.items
 		m.apply()
 		m.selectWanted()
-	case doneMsg:
-		if msg.err != nil {
-			m.say(msg.err.Error(), true)
-			return m, nil
-		}
-		m.say(msg.status, false)
-		cmd := m.load()
-		if msg.sel != "" {
-			sel := msg.sel
-			return m, func() tea.Msg { return selectAfter{cmd().(loadedMsg), sel} }
-		}
-		return m, cmd
 	case selectAfter:
-		m.asked, m.journal = nil, nil
+		m.asked = nil
 		if msg.err != nil {
 			m.err = msg.err.Error()
 			return m, nil
 		}
+		m.err = ""
 		m.all = msg.items
 		m.apply()
-		m.selectID(msg.sel)
+		if msg.sel != "" {
+			m.selectID(msg.sel)
+		}
 	case filesMsg:
 		return m, tea.Batch(m.load(), m.waitFiles())
 	case signalMsg:
@@ -652,8 +714,9 @@ func (m *model) keyList(k tea.KeyPressMsg) tea.Cmd {
 		m.apply()
 		m.say(map[bool]string{true: "tri inversé", false: "tri normal"}[m.rev], false)
 	case "r":
-		m.say("relecture", false)
-		return m.load()
+		return m.reload()
+	case tuikit.BusyKey:
+		m.openBusy()
 	case "c", "n":
 		m.openForm(nil)
 	case "W", "z", "*", "R":
@@ -677,12 +740,12 @@ func (m *model) keyRule(key string) tea.Cmd {
 			m.say(it.ID+" est déjà levée (espace pour la rétablir)", false)
 			return nil
 		}
-		return m.act("lift", ids, it.ID+" levée")
+		return m.act("lever "+it.ID, "lift", ids, it.ID+" levée")
 	case "space":
 		if it.State == store.Lifted {
-			return m.act("restore", ids, it.ID+" rétablie")
+			return m.act("rétablir "+it.ID, "restore", ids, it.ID+" rétablie")
 		}
-		return m.act("lift", ids, it.ID+" levée")
+		return m.act("lever "+it.ID, "lift", ids, it.ID+" levée")
 	case "E":
 		m.openForm(&it)
 	case "N":
@@ -698,16 +761,16 @@ func (m *model) keyRule(key string) tea.Cmd {
 			"Supprimer définitivement « "+it.Title+" » ? Pour une consigne qui ne vaut plus, levez-la (e). Recopiez son id.", it.ID)).SetSize(m.w, m.h)
 	case "o":
 		cfgPath := m.cfgPath
-		return func() tea.Msg {
+		return m.busy.Run("ouvrir "+it.ID, func() (string, error) {
 			out, err := actions.Open(cfgPath, it)
 			if err != nil {
-				return doneMsg{err: err}
+				return "", err
 			}
-			if out == "" {
+			if out = strings.TrimSpace(out); out == "" {
 				out = it.ID + " : référence ouverte"
 			}
-			return doneMsg{status: out}
-		}
+			return out, nil
+		})
 	}
 	return nil
 }
@@ -828,7 +891,7 @@ func (m *model) done(msg tuikit.DoneMsg) tea.Cmd {
 			if args["trigger"] == "" {
 				delete(args, "trigger")
 			}
-			return m.act("add", args, "consigne ajoutée")
+			return m.act("ajouter la consigne", "add", args, "")
 		}
 		args["id"], args["sphere"] = it.ID, it.Sphere
 		if args["trigger"] == "" {
@@ -838,16 +901,16 @@ func (m *model) done(msg tuikit.DoneMsg) tea.Cmd {
 		if len(refs) == 0 {
 			args["ref"] = []string{"none"}
 		}
-		return m.act("edit", args, it.ID+" modifiée")
+		return m.act("modifier "+it.ID, "edit", args, it.ID+" modifiée")
 	case "note":
 		text := strings.TrimSpace(v.String("note"))
 		if text == "" {
 			m.say("note vide : rien n'est ajouté", false)
 			return nil
 		}
-		return m.act("note", map[string]any{"id": it.ID, "sphere": it.Sphere, "text": text}, "note ajoutée à "+it.ID)
+		return m.act("note sur "+it.ID, "note", map[string]any{"id": it.ID, "sphere": it.Sphere, "text": text}, "note ajoutée à "+it.ID)
 	case "rm":
-		return m.act("rm", map[string]any{"id": it.ID, "sphere": it.Sphere}, it.ID+" supprimée")
+		return m.act("supprimer "+it.ID, "rm", map[string]any{"id": it.ID, "sphere": it.Sphere}, it.ID+" supprimée")
 	}
 	return nil
 }

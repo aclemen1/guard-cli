@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/aclemen1/tuikit/complete"
@@ -46,13 +48,41 @@ func setup(t *testing.T) *model {
 // press sends a key and runs the command it returns, as the program would.
 func press(m *model, k tea.KeyPressMsg) {
 	_, cmd := m.Update(k)
-	for cmd != nil {
-		msg := cmd()
-		if msg == nil {
-			return
-		}
-		_, cmd = m.Update(msg)
+	drive(m, cmd)
+}
+
+// drive runs cmd and feeds its messages back to m, batches included; the
+// Busy ticks and what does not answer within a second are dropped.
+func drive(m *model, cmd tea.Cmd) {
+	for _, msg := range collect(cmd) {
+		_, next := m.Update(msg)
+		drive(m, next)
 	}
+}
+
+func collect(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	ch := make(chan tea.Msg, 1)
+	go func() { ch <- cmd() }()
+	var msg tea.Msg
+	select {
+	case msg = <-ch:
+	case <-time.After(time.Second):
+		return nil
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range batch {
+			out = append(out, collect(c)...)
+		}
+		return out
+	}
+	if msg == nil || fmt.Sprintf("%T", msg) == "tuikit.busyTickMsg" {
+		return nil
+	}
+	return []tea.Msg{msg}
 }
 
 func key(s string) tea.KeyPressMsg {
@@ -187,8 +217,62 @@ func TestCardJournal(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("a load asks for the journal of the rule shown")
 	}
-	m.Update(cmd())
+	if v := ansi.Strip(m.render()); !strings.Contains(v, "journal de PG-0001") {
+		t.Fatalf("the first read of a journal shows in the header:\n%s", v)
+	}
+	drive(m, cmd)
 	if v := ansi.Strip(m.render()); !strings.Contains(v, "Journal") || !strings.Contains(v, "entrée du journal de PG-0001") {
 		t.Fatalf("the card shows the journal:\n%s", v)
+	}
+	_, cmd = m.Update(m.load()())
+	if cmd == nil || m.busy.Running() != 0 {
+		t.Fatal("a journal already read is read again quietly after a load")
+	}
+}
+
+func TestBusy(t *testing.T) {
+	m := setup(t)
+	setOpen := func(script string) {
+		raw, _ := os.ReadFile(m.cfgPath)
+		raw = append(raw, []byte("\nopen:\n  run: [sh, -c, '"+script+"']\n")...)
+		os.WriteFile(m.cfgPath, raw, 0o644)
+	}
+	setOpen("sleep 0.2; echo ouvert")
+	_, cmd := m.Update(key("o"))
+	if v := ansi.Strip(m.render()); !strings.Contains(v, "ouvrir PG-0001") {
+		t.Fatalf("a job under way shows in the header:\n%s", v)
+	}
+	drive(m, cmd)
+	if v := ansi.Strip(m.render()); !strings.Contains(v, "✓ ouvert") {
+		t.Fatalf("the end of the job shows its text:\n%s", v)
+	}
+	raw, _ := os.ReadFile(m.cfgPath)
+	os.WriteFile(m.cfgPath, []byte(strings.Split(string(raw), "\nopen:")[0]), 0o644)
+	setOpen("echo refusé >&2; exit 3")
+	press(m, key("o"))
+	press(m, key("j"))
+	v := ansi.Strip(m.render())
+	if !strings.Contains(v, "✗ ouvrir PG-0001") || !strings.Contains(v, "! voir l'échec") {
+		t.Fatalf("a failure stays in sight, with ! in the footer:\n%s", v)
+	}
+	press(m, key("!"))
+	if !m.modal.Open() || !strings.Contains(ansi.Strip(m.render()), "Travaux") {
+		t.Fatalf("! opens the list of jobs:\n%s", ansi.Strip(m.render()))
+	}
+	if m.busy.Unread() != 0 {
+		t.Fatal("opening the list reads the failure")
+	}
+	press(m, key("!"))
+	if m.modal.Open() {
+		t.Fatal("! closes the list")
+	}
+	press(m, key("space"))
+	if v := ansi.Strip(m.render()); !strings.Contains(v, "✓ PG-0002 levée") {
+		t.Fatalf("an action ends with its text:\n%s", v)
+	}
+	press(m, key("c"))
+	press(m, key("!"))
+	if !m.modal.Open() || strings.Contains(ansi.Strip(m.render()), "Travaux") {
+		t.Fatal("! in a form is typed, not a key of the TUI")
 	}
 }

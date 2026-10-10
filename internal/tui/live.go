@@ -25,7 +25,7 @@ func stamp(path string) string {
 }
 
 // checkBin asks for a restart once a new binary has stayed the same for two
-// checks, and only when nothing is being typed.
+// checks, and only when nothing is being typed or run.
 func (m *model) checkBin() bool {
 	if m.exe == "" {
 		return false
@@ -43,7 +43,7 @@ func (m *model) checkBin() bool {
 		m.say("nouvelle version installée : relance dès la fin de la saisie", false)
 		return false
 	}
-	return true
+	return m.busy.Running() == 0 // a job under way ends first
 }
 
 // saved is what a restart keeps.
