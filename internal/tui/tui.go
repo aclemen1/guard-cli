@@ -92,8 +92,8 @@ type model struct {
 	modal     *tuikit.Modal
 	target    actions.Item // the rule a modal is about
 	editing   bool
-	// refSources are the shared completion sources named by complete.refs in the configuration.
-	refSources []complete.Source
+	// refComp completes from the shared sources named by complete.refs in the configuration.
+	refComp *complete.Completer
 
 	w, h      int
 	status    string
@@ -136,16 +136,10 @@ func newModel(cfgPath string, cfg *config.Config, spheres []string) *model {
 	in := textinput.New()
 	in.Prompt = ""
 	m := &model{cfgPath: cfgPath, cfg: cfg, spheres: spheres, input: in, w: 100, h: 30, detailOn: true}
-	for _, name := range cfg.CompleteFor("refs") {
-		src, err := complete.Lookup(name)
-		if err != nil {
-			m.say("complétion des réfs : "+err.Error(), true)
-			continue
-		}
-		m.refSources = append(m.refSources, src)
-	}
-	if len(m.refSources) > 0 {
-		complete.New(m.refSources...) // starts the commands, so the cache is warm at the first form
+	var missing []string
+	m.refComp, missing = complete.FromConfig(cfg.CompleteFor("refs")) // starts the commands: the cache is warm at the first form
+	if len(missing) > 0 {
+		m.say("complétion des réfs : sources absentes de "+complete.File()+" : "+strings.Join(missing, ", "), true)
 	}
 	m.signals = make(chan os.Signal, 1)
 	signal.Notify(m.signals, syscall.SIGUSR1)
@@ -763,13 +757,11 @@ func (m *model) refCompleter() tuikit.Completer {
 		}
 	}
 	sort.Slice(cited, func(i, j int) bool { return cited[i].Value < cited[j].Value })
-	sources := append([]complete.Source{{Static: cited}}, m.refSources...)
-	c := complete.New(sources...)
-	seenItem := map[string]bool{}
+	own := complete.New(complete.Source{Static: cited})
 	return func(q string) []tuikit.Item {
-		clear(seenItem)
+		seenItem := map[string]bool{}
 		var out []tuikit.Item
-		for _, x := range c.Complete(q) {
+		for _, x := range append(own.Complete(q), m.refComp.Complete(q)...) {
 			if !seenItem[x.Value] {
 				seenItem[x.Value] = true
 				out = append(out, x)

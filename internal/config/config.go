@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/aclemen1/tuikit/complete"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,7 +23,7 @@ type Config struct {
 	Open Command `yaml:"open,omitempty"`
 	// Complete names, for each field of the TUI (refs), the sources of the shared
 	// reference completion (tuikit refs.yaml), proposed besides the refs already cited.
-	Complete map[string][]string `yaml:"complete,omitempty"`
+	Complete map[string]complete.Uses `yaml:"complete,omitempty"`
 	// Refs is the former name of complete.refs, still read.
 	Refs []string `yaml:"refs,omitempty"`
 
@@ -134,14 +135,17 @@ func (c *Config) fill() {
 func (c *Config) File() string { return c.path }
 
 // CompleteFor are the completion sources of a field of the TUI.
-func (c *Config) CompleteFor(field string) []string {
+func (c *Config) CompleteFor(field string) complete.Uses {
 	if l, ok := c.Complete[field]; ok {
 		return l
 	}
+	var out complete.Uses
 	if field == "refs" {
-		return c.Refs
+		for _, n := range c.Refs {
+			out = append(out, complete.Use{Source: n})
+		}
 	}
-	return nil
+	return out
 }
 
 func (c *Config) Names() []string {

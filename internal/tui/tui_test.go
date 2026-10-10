@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/aclemen1/tuikit/complete"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/aclemen1/guard-cli/internal/config"
@@ -146,11 +147,11 @@ func TestRefCompletion(t *testing.T) {
 	os.WriteFile(refs, []byte("sources:\n  people:\n    prefix: \"contact:\"\n    static:\n      - {value: AGENCY, label: l'agence}\n"), 0o644)
 	t.Setenv("TUIKIT_REFS", refs)
 	m := setup(t)
-	m.cfg.Complete = map[string][]string{"refs": {"people", "missing"}}
+	m.cfg.Complete = map[string]complete.Uses{"refs": {{Source: "people"}, {Source: "missing"}}}
 	m2 := newModel(m.cfgPath, m.cfg, m.spheres)
 	m2.Update(m2.load()())
-	if len(m2.refSources) != 1 || !strings.Contains(m2.status, "missing") {
-		t.Fatalf("one source known, one missing: %d %q", len(m2.refSources), m2.status)
+	if !strings.Contains(m2.status, "missing") {
+		t.Fatalf("a missing source is reported: %q", m2.status)
 	}
 	var got []string
 	for _, it := range m2.refCompleter()("") {
@@ -170,11 +171,11 @@ func TestRefCompletion(t *testing.T) {
 
 func TestCompleteFormerKey(t *testing.T) {
 	c := &config.Config{Refs: []string{"a"}}
-	if got := c.CompleteFor("refs"); len(got) != 1 || got[0] != "a" {
+	if got := c.CompleteFor("refs"); len(got) != 1 || got[0].Source != "a" {
 		t.Fatalf("former refs key still read: %v", got)
 	}
-	c.Complete = map[string][]string{"refs": {"b"}}
-	if got := c.CompleteFor("refs"); len(got) != 1 || got[0] != "b" {
+	c.Complete = map[string]complete.Uses{"refs": {{Source: "b"}}}
+	if got := c.CompleteFor("refs"); len(got) != 1 || got[0].Source != "b" {
 		t.Fatalf("complete.refs wins: %v", got)
 	}
 }
