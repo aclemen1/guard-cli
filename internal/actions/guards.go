@@ -21,7 +21,9 @@ import (
 type Item struct {
 	store.Guard
 	Sphere string `json:"sphere"`
-	// Journal is what history.ls printed for the rule: guard show only.
+	// History is what history.ls printed for the rule: guard show only.
+	History string `json:"history,omitempty"`
+	// Journal is the former name of History, still written.
 	Journal string `json:"journal,omitempty"`
 }
 
@@ -209,7 +211,8 @@ func registerGuards() {
 				return nil, err
 			}
 			it := ItemOf(s, g)
-			it.Journal = Journal(cfg, it)
+			it.History = Journal(cfg, it)
+			it.Journal = it.History
 			return it, nil
 		},
 		Text: textDetail,
@@ -721,8 +724,8 @@ func textDetail(w io.Writer, v any) {
 			fmt.Fprintf(w, "  %s  %s  %s\n", l.At, l.By, l.What)
 		}
 	}
-	if it.Journal != "" {
-		fmt.Fprintf(w, "\njournal:\n%s\n", it.Journal)
+	if it.History != "" {
+		fmt.Fprintf(w, "\njournal:\n%s\n", it.History)
 	}
 }
 

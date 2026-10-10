@@ -89,7 +89,7 @@ complete: {refs: [cases, people]}   # sources of tuikit's shared completion (ref
 ```
 
 `history.ls` is an argv that prints the latest entries of a rule's journal;
-`{id}` and `{sphere}` name the rule. `guard show` (field `journal`) and the
+`{id}` and `{sphere}` name the rule. `guard show` (field `history`; `journal` too, for a while) and the
 card of the TUI show what it prints; nothing is shown when it prints nothing
 or fails.
 
