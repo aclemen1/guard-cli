@@ -92,7 +92,7 @@ type model struct {
 	modal     *tuikit.Modal
 	target    actions.Item // the rule a modal is about
 	editing   bool
-	// refSources are the shared completion sources named by refs in the configuration.
+	// refSources are the shared completion sources named by complete.refs in the configuration.
 	refSources []complete.Source
 
 	w, h      int
@@ -136,7 +136,7 @@ func newModel(cfgPath string, cfg *config.Config, spheres []string) *model {
 	in := textinput.New()
 	in.Prompt = ""
 	m := &model{cfgPath: cfgPath, cfg: cfg, spheres: spheres, input: in, w: 100, h: 30, detailOn: true}
-	for _, name := range cfg.Refs {
+	for _, name := range cfg.CompleteFor("refs") {
 		src, err := complete.Lookup(name)
 		if err != nil {
 			m.say("complétion des réfs : "+err.Error(), true)

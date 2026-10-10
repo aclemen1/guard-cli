@@ -85,11 +85,11 @@ spheres:
 hooks: []
 notes: {run: ["~/bin/add-note"]}
 open: {run: ["~/bin/open-ref"]}
-refs: [cases, people]          # sources of tuikit's shared completion (refs.yaml) for the Réfs field
+complete: {refs: [cases, people]}   # sources of tuikit's shared completion (refs.yaml), by field
 ```
 
 The Réfs field of the TUI proposes the refs already cited by rules, then those
-of the sources named in `refs`, declared once in `~/.config/tuikit/refs.yaml`
+of the sources named in `complete.refs` (formerly `refs`), declared once in `~/.config/tuikit/refs.yaml`
 (see tuikit's `complete` package).
 
 | Variable | Effect |

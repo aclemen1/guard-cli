@@ -20,8 +20,10 @@ type Config struct {
 	Notes Command `yaml:"notes,omitempty"`
 	// Open is the command the TUI runs on o: it opens what a rule refers to.
 	Open Command `yaml:"open,omitempty"`
-	// Refs name the sources of the shared reference completion (tuikit refs.yaml)
-	// that the TUI proposes in the Réfs field, besides the refs already cited.
+	// Complete names, for each field of the TUI (refs), the sources of the shared
+	// reference completion (tuikit refs.yaml), proposed besides the refs already cited.
+	Complete map[string][]string `yaml:"complete,omitempty"`
+	// Refs is the former name of complete.refs, still read.
 	Refs []string `yaml:"refs,omitempty"`
 
 	path string
@@ -130,6 +132,17 @@ func (c *Config) fill() {
 }
 
 func (c *Config) File() string { return c.path }
+
+// CompleteFor are the completion sources of a field of the TUI.
+func (c *Config) CompleteFor(field string) []string {
+	if l, ok := c.Complete[field]; ok {
+		return l
+	}
+	if field == "refs" {
+		return c.Refs
+	}
+	return nil
+}
 
 func (c *Config) Names() []string {
 	var out []string

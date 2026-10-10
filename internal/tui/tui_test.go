@@ -146,7 +146,7 @@ func TestRefCompletion(t *testing.T) {
 	os.WriteFile(refs, []byte("sources:\n  people:\n    prefix: \"contact:\"\n    static:\n      - {value: AGENCY, label: l'agence}\n"), 0o644)
 	t.Setenv("TUIKIT_REFS", refs)
 	m := setup(t)
-	m.cfg.Refs = []string{"people", "missing"}
+	m.cfg.Complete = map[string][]string{"refs": {"people", "missing"}}
 	m2 := newModel(m.cfgPath, m.cfg, m.spheres)
 	m2.Update(m2.load()())
 	if len(m2.refSources) != 1 || !strings.Contains(m2.status, "missing") {
@@ -165,5 +165,16 @@ func TestRefCompletion(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "contact:AGENCY" {
 		t.Fatalf("search by label: %v", got)
+	}
+}
+
+func TestCompleteFormerKey(t *testing.T) {
+	c := &config.Config{Refs: []string{"a"}}
+	if got := c.CompleteFor("refs"); len(got) != 1 || got[0] != "a" {
+		t.Fatalf("former refs key still read: %v", got)
+	}
+	c.Complete = map[string][]string{"refs": {"b"}}
+	if got := c.CompleteFor("refs"); len(got) != 1 || got[0] != "b" {
+		t.Fatalf("complete.refs wins: %v", got)
 	}
 }
