@@ -14,6 +14,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"github.com/aclemen1/tuikit"
+	"github.com/aclemen1/tuikit/complete"
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/aclemen1/guard-cli/internal/actions"
@@ -91,6 +92,8 @@ type model struct {
 	modal     *tuikit.Modal
 	target    actions.Item // the rule a modal is about
 	editing   bool
+	// refSources are the shared completion sources named by refs in the configuration.
+	refSources []complete.Source
 
 	w, h      int
 	status    string
@@ -133,6 +136,17 @@ func newModel(cfgPath string, cfg *config.Config, spheres []string) *model {
 	in := textinput.New()
 	in.Prompt = ""
 	m := &model{cfgPath: cfgPath, cfg: cfg, spheres: spheres, input: in, w: 100, h: 30, detailOn: true}
+	for _, name := range cfg.Refs {
+		src, err := complete.Lookup(name)
+		if err != nil {
+			m.say("complétion des réfs : "+err.Error(), true)
+			continue
+		}
+		m.refSources = append(m.refSources, src)
+	}
+	if len(m.refSources) > 0 {
+		complete.New(m.refSources...) // starts the commands, so the cache is warm at the first form
+	}
 	m.signals = make(chan os.Signal, 1)
 	signal.Notify(m.signals, syscall.SIGUSR1)
 	return m
@@ -697,7 +711,7 @@ func (m *model) openForm(edit *actions.Item) {
 	title := tuikit.TextArea("title", "Règle").Required().Help("la consigne elle-même : « Ne jamais signer… », « Rien sans l'accord de… »")
 	when := tuikit.Text("when", "Quand").Help("la situation en mots : « quand l'agence envoie un document à signer »")
 	trig := tuikit.Ref("trigger", "Déclencheur", m.triggers).Help("on:<outil>:<événement>[:<id>] ou with:<…> (with:contact:<alias>) ; facultatif")
-	refs := tuikit.Refs("refs", "Réfs", m.refs).Help("ce à quoi la consigne se rattache, <outil>:<id> ; entrée ou virgule pour en ajouter une")
+	refs := tuikit.Refs("refs", "Réfs", m.refCompleter()).Help("ce à quoi la consigne se rattache, <outil>:<id> ; entrée ou virgule pour en ajouter une")
 	body := tuikit.TextArea("body", "Contexte")
 	label := "Nouvelle consigne"
 	m.editing = edit != nil
@@ -736,22 +750,33 @@ func (m *model) triggers(q string) []tuikit.Item {
 	return out
 }
 
-// refs completes a ref from those the rules already cite.
-func (m *model) refs(q string) []tuikit.Item {
-	q = strings.ToLower(strings.TrimSpace(q))
+// refCompleter proposes the refs already cited, then those of the configured sources.
+func (m *model) refCompleter() tuikit.Completer {
 	seen := map[string]bool{}
-	var out []tuikit.Item
+	var cited []complete.Entry
 	for _, it := range m.all {
 		for _, r := range it.Refs {
-			if seen[r] || (q != "" && !strings.Contains(strings.ToLower(r), q)) {
-				continue
+			if !seen[r] {
+				seen[r] = true
+				cited = append(cited, complete.Entry{Value: r, Label: "cité par " + it.ID})
 			}
-			seen[r] = true
-			out = append(out, tuikit.Item{Value: r, Label: r})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Value < out[j].Value })
-	return out
+	sort.Slice(cited, func(i, j int) bool { return cited[i].Value < cited[j].Value })
+	sources := append([]complete.Source{{Static: cited}}, m.refSources...)
+	c := complete.New(sources...)
+	seenItem := map[string]bool{}
+	return func(q string) []tuikit.Item {
+		clear(seenItem)
+		var out []tuikit.Item
+		for _, x := range c.Complete(q) {
+			if !seenItem[x.Value] {
+				seenItem[x.Value] = true
+				out = append(out, x)
+			}
+		}
+		return out
+	}
 }
 
 // done reads the answer of a modal.

@@ -20,6 +20,9 @@ type Config struct {
 	Notes Command `yaml:"notes,omitempty"`
 	// Open is the command the TUI runs on o: it opens what a rule refers to.
 	Open Command `yaml:"open,omitempty"`
+	// Refs name the sources of the shared reference completion (tuikit refs.yaml)
+	// that the TUI proposes in the Réfs field, besides the refs already cited.
+	Refs []string `yaml:"refs,omitempty"`
 
 	path string
 }

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -137,5 +138,32 @@ func TestSelect(t *testing.T) {
 	m3.Update(m3.load()())
 	if it, ok := m3.current(); !ok || it.ID != "PG-0001" || m3.view != 0 || !strings.Contains(m3.status, "PG-0042 introuvable") {
 		t.Fatalf("an unknown id opens as usual, with a message: %q %+v", m3.status, it)
+	}
+}
+
+func TestRefCompletion(t *testing.T) {
+	refs := filepath.Join(t.TempDir(), "refs.yaml")
+	os.WriteFile(refs, []byte("sources:\n  people:\n    prefix: \"contact:\"\n    static:\n      - {value: AGENCY, label: l'agence}\n"), 0o644)
+	t.Setenv("TUIKIT_REFS", refs)
+	m := setup(t)
+	m.cfg.Refs = []string{"people", "missing"}
+	m2 := newModel(m.cfgPath, m.cfg, m.spheres)
+	m2.Update(m2.load()())
+	if len(m2.refSources) != 1 || !strings.Contains(m2.status, "missing") {
+		t.Fatalf("one source known, one missing: %d %q", len(m2.refSources), m2.status)
+	}
+	var got []string
+	for _, it := range m2.refCompleter()("") {
+		got = append(got, it.Value)
+	}
+	if strings.Join(got, ",") != "case:deposit,contact:AGENCY" {
+		t.Fatalf("cited refs, then the sources: %v", got)
+	}
+	got = nil
+	for _, it := range m2.refCompleter()("agence") {
+		got = append(got, it.Value)
+	}
+	if strings.Join(got, ",") != "contact:AGENCY" {
+		t.Fatalf("search by label: %v", got)
 	}
 }
